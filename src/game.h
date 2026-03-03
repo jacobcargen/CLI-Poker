@@ -5,6 +5,7 @@
 #include "ui.h"
 #include <string>
 #include <vector>
+#include <algorithm>
 #include "host.h"
 
 enum game {
@@ -96,6 +97,7 @@ private:
     void pokerGame();
     bool pokerResponse(const std::string &lastResponse);
     void UpdateDisplayForAll(bool isLast);
+    void eliminateBrokePlayers();
 };
 
 #endif // GAME_H

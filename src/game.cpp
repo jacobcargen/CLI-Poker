@@ -6,6 +6,7 @@
 #include "ui.h"
 #include <vector>
 #include <map>
+#include <algorithm>
 #include "time.h"
 
 // Store players here (TYPE 'gamePlayer' (game player) not to be confused with TYPE 'Player'(CLIENT))
@@ -112,6 +113,13 @@ void Game::gameTick()
 }
 void Game::nextPlayer()
 {
+    if (players.empty())
+    {
+        waitingForPlayer = false;
+        currentPlayerTurn = nullptr;
+        return;
+    }
+
     // Move to the next player in the list
     int attempts = players.size(); // To prevent infinite loops
     do
@@ -140,6 +148,20 @@ void Game::nextPlayer()
 void Game::resetGame()
 {
     host->promptComplete();
+
+    eliminateBrokePlayers();
+    if (players.size() < 2)
+    {
+        for (gamePlayer& p : players)
+        {
+            host->sendMessageToClient(p.client, "Not enough players with money left. Waiting for a new game.\n", false);
+        }
+        isStarted = false;
+        waitingForPlayer = false;
+        currentPlayerTurn = nullptr;
+        return;
+    }
+
     pokerGameData.pot = 0;
     pokerGameData.round = 1;
     pokerGameData.gameRaise = 0;
@@ -331,6 +353,7 @@ bool Game::pokerResponse(const std::string &lastResponse)
     {
         pokerGameData.expChocie = NONE;
         int betAmount = 0;
+        bool isValidNumber = true;
         try
         {
             betAmount = std::stoi(lastResponse);
@@ -339,9 +362,10 @@ bool Game::pokerResponse(const std::string &lastResponse)
         {
             std::cout << "ERROR" << std::endl;
             std::cerr << e.what() << '\n';
+            isValidNumber = false;
         }
         
-        if (betAmount > 0 && betAmount <= currentPlayerTurn->money)
+        if (isValidNumber && betAmount > 0 && betAmount <= currentPlayerTurn->money)
         {
             std::cout << "Valid bet of $" + std::to_string(betAmount) + "\n";
             currentPlayerTurn->isBetting = false;
@@ -351,11 +375,17 @@ bool Game::pokerResponse(const std::string &lastResponse)
             currentPlayerTurn->raise = pokerGameData.gameRaise;
             return true;
         }
+
+        host->sendMessageToClient(currentPlayerTurn->client, "Invalid bet amount. Enter a positive amount up to your balance.\n", false);
+        host->promptClient(currentPlayerTurn->client, "How much? $");
+        pokerGameData.expChocie = BET_AMOUNT;
+        return true;
     }
     else if (pokerGameData.expChocie == RAISE_AMOUNT)
     {
         pokerGameData.expChocie = NONE;
         int raiseAmount = 0;
+        bool isValidNumber = true;
         try
         {
             raiseAmount = std::stoi(lastResponse);
@@ -364,10 +394,11 @@ bool Game::pokerResponse(const std::string &lastResponse)
         {
             std::cout << "ERROR" << std::endl;
             std::cerr << e.what() << '\n';
+            isValidNumber = false;
         }
         
-        int requiredAmt = pokerGameData.gameRaise - currentPlayerTurn->raise;
-        if (currentPlayerTurn->money >= raiseAmount + requiredAmt)
+        int requiredAmt = std::max(0, pokerGameData.gameRaise - currentPlayerTurn->raise);
+        if (isValidNumber && raiseAmount > 0 && currentPlayerTurn->money >= raiseAmount + requiredAmt)
         {
             std::cout << "Valid bet of $" + std::to_string(raiseAmount) + "\n";
             currentPlayerTurn->isBetting = false;
@@ -377,6 +408,11 @@ bool Game::pokerResponse(const std::string &lastResponse)
             currentPlayerTurn->raise = pokerGameData.gameRaise;
             return true;
         }
+
+        host->sendMessageToClient(currentPlayerTurn->client, "Invalid raise amount. Enter a positive raise you can afford.\n", false);
+        host->promptClient(currentPlayerTurn->client, "How much? $");
+        pokerGameData.expChocie = RAISE_AMOUNT;
+        return true;
     }
     else if (pokerGameData.expChocie == BET_CHECK)
     {
@@ -413,7 +449,7 @@ bool Game::pokerResponse(const std::string &lastResponse)
         else if (lastResponse == "c") // Call
         {
             
-            int requiredAmt = pokerGameData.gameRaise - currentPlayerTurn->raise;
+            int requiredAmt = std::max(0, pokerGameData.gameRaise - currentPlayerTurn->raise);
             if (currentPlayerTurn->money < requiredAmt) // ALL IN
             {
                 pokerGameData.pot += currentPlayerTurn->money;
@@ -683,6 +719,13 @@ void Game::pokerGame()
     std::cout << "|||pokerGame|||" << std::endl;
     UI ui;
 
+    eliminateBrokePlayers();
+    if (players.size() < 2)
+    {
+        resetGame();
+        return;
+    }
+
     
     if (currentPlayerTurn != nullptr && currentPlayerTurn->isBetting)
     {
@@ -821,6 +864,54 @@ void Game::pokerGame()
         const std::string PROMPT2 = "Call ('c')   Raise ('r')   Fold ('f'): ";
         host->promptClient(currentPlayerTurn->client, PROMPT2);
     }
+}
+
+void Game::eliminateBrokePlayers()
+{
+    std::vector<gamePlayer*> removed;
+    bool removedCurrentPlayer = false;
+    for (gamePlayer& p : players)
+    {
+        if (p.money <= 0)
+        {
+            removed.push_back(&p);
+            if (&p == currentPlayerTurn)
+                removedCurrentPlayer = true;
+        }
+    }
+
+    for (gamePlayer* p : removed)
+    {
+        if (p != nullptr && p->client != nullptr)
+            host->sendMessageToClient(p->client, "You are out of money and have been removed from the game.\n", false);
+    }
+
+    players.erase(
+        std::remove_if(players.begin(), players.end(), [](const gamePlayer& p)
+        {
+            return p.money <= 0;
+        }),
+        players.end()
+    );
+
+    if (removedCurrentPlayer)
+    {
+        currentPlayerTurn = nullptr;
+        pTurn = -1;
+    }
+
+    if (players.empty())
+    {
+        currentPlayerTurn = nullptr;
+        pTurn = 0;
+        return;
+    }
+
+    if (pTurn >= static_cast<int>(players.size()))
+        pTurn = static_cast<int>(players.size()) - 1;
+
+    if (pTurn < -1)
+        pTurn = -1;
 }
 
 void Game::UpdateDisplayForAll(bool isLast)
