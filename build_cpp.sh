@@ -1,2 +1,2 @@
 #!/bin/bash
-g++ src/*.cpp -std=c++17 -o run.out
+g++ src/*.cpp -std=c++17 -arch arm64 -o run.out

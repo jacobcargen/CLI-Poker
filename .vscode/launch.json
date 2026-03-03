@@ -2,20 +2,19 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "C/C++ Runner: Debug Session",
+      "name": "C/C++ Runner: Debug Session (ARM64)",
       "type": "cppdbg",
       "request": "launch",
       "args": [],
       "stopAtEntry": false,
       "externalConsole": false,
-      "cwd": "/home/jacob/source/repos/CS330-FinalProject/src",
-      "program": "/home/jacob/source/repos/CS330-FinalProject/src/build/Debug/outDebug",
-      "MIMode": "gdb",
-      "miDebuggerPath": "gdb",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/run.out",
+      "MIMode": "lldb",
       "setupCommands": [
         {
-          "description": "Enable pretty-printing for gdb",
-          "text": "-enable-pretty-printing",
+          "description": "Enable pretty-printing for lldb",
+          "text": "settings set target.process.follow-fork-mode child",
           "ignoreFailures": true
         }
       ]
