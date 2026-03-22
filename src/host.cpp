@@ -7,12 +7,9 @@
 #include <unistd.h>
 #include "game.h"
 #include <vector>
+#include <cstdint>
 
 Player clients[MAX_CLIENTS] = {};
-
-Player * promptedClient = nullptr;
-std::string clientPromptResponse = "";
-std::string lastPrompt = "";
 bool oneTimeOverride = false;
 
 // Constructor: Starts the host server when an object of Host is created
@@ -58,7 +55,12 @@ void Host::start()
         close(server_fd);
         return;
     }
-    std::cout << "Listening on port " << PORT << std::endl;
+    std::cout << "Listening on ";
+    std::cout << std::flush;
+    if (system("hostname -I") != 0) {
+        std::cerr << "Failed to get IP address\n";
+    }
+    std::cout << "Port: " << PORT << std::endl;
 
     // Main loop to handle incoming connections and messages
     fd_set readfds;
@@ -102,86 +104,153 @@ void Host::start()
                     {
                         client.socket = new_socket;
                         std::cout << "Client[" << client.socket << "] has joined the server.\n";
-                        sendMessageToClient(&client, WELCOME_MSG, false);
-                        sendMessageToClient(&client, PROMPT_MSG + "Type ('x') to ready-up: ", false);
-                        /*
-                        UI ui;
-                        std::string str = ui.getTestHand() + "\n\n\n\n\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n";
-                        std::cout << "length:" << str.length() << std::endl;
-                        sendMessageToClient(&client, str);
-                        */
+                        sendMessageToClient(&client, ServerMessage::NORMAL, WELCOME_MSG);
+                        sendMessageToClient(&client, ServerMessage::PROMPT, "Enter your nickname: ");
                         break;
                     }
                 }
             }
 
+            
+
             // Handle msgs
             for (Player& client : clients) 
             {
-                if (client.socket > 0 && FD_ISSET(client.socket, &readfds)) 
+                if (client.socket <= 0) { continue; }
+                if (!FD_ISSET(client.socket, &readfds)) { continue; }
+                
+                char buffer[MESSAGE_SIZE] = {0};
+                int valread = read(client.socket, buffer, MESSAGE_SIZE);
+
+                if (valread == 0) // Client disconnected
                 {
-                    char buffer[MESSAGE_SIZE] = {0};
-                    int valread = read(client.socket, buffer, sizeof(buffer));
+                    std::cout << "Client[" << client.socket << "] disconnected.\n";
+                    close(client.socket);
+                    client = {}; // Reset the client object
+                    continue;
+                }
 
-                    if (valread == 0) // Client disconnected
+                buffer[valread] = '\0'; // Null termd data
+                std::string clientMsg(buffer, valread);
+                
+                if (clientMsg.empty()) continue;
+
+                // Parse data
+                ClientMessage msgType = static_cast<ClientMessage>(clientMsg[0]);
+                std::string parsedMsg = clientMsg.size() > 1 ? clientMsg.substr(1) : "";
+
+                // Nickname logic   
+                if (!client.hasMadeNickname)
+                {
+                    client.hasMadeNickname = true;
+                    for (auto cl : clients)
                     {
-                        std::cout << "Client[" << client.socket << "] disconnected.\n";
-                        close(client.socket);
-                        client = {}; // Reset the client object
+                        if (parsedMsg == client.name)
+                        {
+                            client.hasMadeNickname = false;
+                            sendMessageToClient(&client, ServerMessage::NORMAL, "Nickname already taken. " + parsedMsg);
+                        }
                     }
-                    else 
+                    if (parsedMsg.empty() || parsedMsg.size() > 16)
                     {
-                        buffer[valread] = '\0'; // Null termd data
-                        std::string clientMsg(buffer);
-                        std::cout << "Client[" << client.socket << "]: " << clientMsg << "\n";
-                        if (promptedClient == &client)
-                        {
-                            clientPromptResponse = clientMsg;
-                        }
-                        // rdy up logic
-                        if (!client.isReady && clientMsg == "x") 
-                        {
-                            // Add player to the game
-                            game.AddPlayer("Player" + std::to_string(client.socket), &client);
-                            client.isReady = true;
-
-                            // Check if all clients are ready
-                            bool allReady = true;
-                            for (const Player& c : clients) 
-                            {
-                                if (c.socket > 0 && !c.isReady) 
-                                {
-                                    allReady = false;
-                                    break;
-                                }
-                            }
-
-                            if (allReady)
-                            {
-                                std::cout << "All players are ready! Starting game...\n";
-                                game.setGameAsReady();
-                            }
-                        }
+                        client.hasMadeNickname = false;
+                        sendMessageToClient(&client, ServerMessage::NORMAL, "Invalid nickname. Must be 1-16 characters.");
+                    }
 
 
+                    if (!client.hasMadeNickname)
+                    {
+                        reprompt(&client);
+                    }
+                    else
+                    {
+                        client.name = parsedMsg;
+                        sendMessageToClient(&client, ServerMessage::NORMAL, "Nickname set to " + client.name);
+                        promptComplete(&client);
+                        sendMessageToClient(&client, ServerMessage::PROMPT, "Type 'x' to join the game lobby. Type 'q' to quit.");
+                    }
+                    continue;
+                }
+                
+                // Read up  logic
+                if (!client.isReady)
+                {
+                    if (parsedMsg == "x" || parsedMsg == "X")
+                    {
+                        promptComplete(&client);
+                        client.isReady = true;
+                        std::cout << "Client[" << client.socket << "] is now ready.\n";
+                        sendMessageToClient(&client, ServerMessage::NORMAL, "Joining game lobby...");
+                    }
+                    else
+                    {
+                        reprompt(&client);
+                        continue;
                     }
                 }
-                else 
-                    std::cout << "something else\n";
+
+                // Parse message type
+                switch (msgType)
+                {
+                case ClientMessage::QUIT:
+                    // Disconnect Client
+                    
+                    break;
+                case ClientMessage::RESPONSE:
+                {
+                    // Ready up logic - only if game hasn't started yet
+                    if (!game.hasStarted()) 
+                    {
+                        // Add player to the game
+                        game.AddPlayer(client.name + " - " + std::to_string(client.socket), &client);
+                        client.isReady = true;
+                        std::cout << "Client[" << client.socket << "] is now ready.\n";
+
+                        // Count how many clients are connected
+                        int connectedCount = 0;
+                        int readyCount = 0;
+                        for (const Player& c : clients) 
+                        {
+                            if (c.socket > 0) 
+                            {
+                                connectedCount++;
+                                if (c.isReady)
+                                    readyCount++;
+                            }
+                        }
+
+                        
+
+                        std::cout << "Ready: " << readyCount << "/" << connectedCount << "\n";
+                        bool allReady = (connectedCount >= 2) && (readyCount == connectedCount);
+
+                        if (allReady)
+                        {
+                            std::cout << "All players are ready! Starting game...\n";
+                            game.setGameAsReady();
+                        }
+                    }
+                    else if (client.isPrompted)
+                    {
+                        client.clientPromptResponse = parsedMsg;
+                    }
+                    break;
+                }    
+                default:
+                    std::cout << "Unknown message type received from Client[" << client.socket << "].\n";
+                    break;
+                }
             }
         }
         
 
-        if (oneTimeOverride)
-            oneTimeOverride = false;
+        if (oneTimeOverride) oneTimeOverride = false;
         
         
         if (game.hasStarted())
         {
             game.gameTick();
         }
-        else
-            std::cout << "game not started\n";
     }
     std::cout << "Closing\n";
     close(server_fd);
@@ -194,20 +263,14 @@ void Host::enableOneTimeOverride()
 
 void Host::reprompt(Player * client)
 {
-    if (!lastPrompt.empty())
-        promptClient(client, lastPrompt);
-    else
-        std::cout << "cannot reprompt" << std::endl;
+    if (client->isPrompted)
+    { 
+        sendMessageToClient(client, ServerMessage::PROMPT, client->promptMessage);
+    }
+    else { std::cout << "cannot reprompt" << std::endl; }
 }
 
-void Host::promptComplete()
-{
-    promptedClient = nullptr;
-    clientPromptResponse = "";
-    lastPrompt = "";
-}
-
-void Host::sendMessageToClient(Player* client, const std::string& dataStr, bool isClear) 
+void Host::sendMessageToClient(Player* client, ServerMessage messageType, const std::string& dataStr) 
 {
     // Make sure 
 
@@ -216,47 +279,49 @@ void Host::sendMessageToClient(Player* client, const std::string& dataStr, bool 
         std::cerr << "Invalid client or socket.\n";
         return;
     }
+    
+    char msgType = static_cast<char>(messageType);
+    std::string packet = std::string(1, msgType) + dataStr;
+    
+    // Send length prefix (4 bytes) + type (1 byte) + data
+    uint32_t length = htonl(packet.size());
+    std::string lengthPrefix(reinterpret_cast<const char*>(&length), 4);
+    std::string fullPacket = lengthPrefix + packet;
+    std::cout << "Server --> Client[" << client->socket << "]: " << packet << "\n";
 
-    // Step 1: Send the clear screen message if requested
-    if (isClear) 
+    // Server side type logic
+    switch (messageType)
     {
-        std::cout << "Server --> Client[" << client->socket << "]: \n" << CLEAR_MSG;
-
-        std::string clearMsg = CLEAR_MSG;
-        if (send(client->socket, clearMsg.c_str(), clearMsg.size(), 0) < 0) 
-        {
-
-            std::cerr << "Error sending clear message: " << strerror(errno) << "\n";
+        case ServerMessage::NORMAL:
+            break;
+        case ServerMessage::CLEAR:
+            break;
+        case ServerMessage::PROMPT:
+            client->promptMessage = dataStr;
+            client->isPrompted = true;
+            break;
+        default:
+            std::cerr << "Unknown message type.\n";
             return;
-        }
     }
 
-    // Step 2: Send the main message
-    const std::string formattedMessage = isClear ? std::string("\u200B \n" + dataStr + "\n") : (dataStr);
-                                                                
-    std::cout << "Server --> Client[" << client->socket << "]: \n" << formattedMessage;
-    if (send(client->socket, formattedMessage.c_str(), formattedMessage.size(), 0) < 0) 
+
+    auto result = send(client->socket, fullPacket.c_str(), fullPacket.size(), 0);
+
+    if (result < 0)
     {
         std::cerr << "Error sending data message: " << strerror(errno) << "\n";
     }
+
+}
+void Host::promptComplete(Player * client)
+{
+    client->isPrompted = false;
+    client->clientPromptResponse = "";
+    client->promptMessage = "";
 }
 
-
-void Host::promptClient(Player * client, const std::string &dataStr)
+std::string Host::getResponseFromClientPrompt(Player * client)
 {
-    lastPrompt = dataStr;
-
-    promptedClient = client;
-    clientPromptResponse = "";
-    std::string data = PROMPT_MSG + dataStr;
-    sendMessageToClient(client, data, false);
-}
-std::string Host::getReponseFromClientPrompt()
-{
-    if (clientPromptResponse == "")
-        return "";
-    std::string response = clientPromptResponse;
-    clientPromptResponse = "";
-    promptedClient = nullptr;
-    return response;
+    return client->clientPromptResponse;
 }

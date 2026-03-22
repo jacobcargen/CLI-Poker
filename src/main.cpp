@@ -4,6 +4,8 @@
 #include "host.h"
 #include "client.h"
 
+#define GAME_VERSION "0.1"
+
 // Prototpyes
 void host();
 void client();

@@ -44,7 +44,7 @@ void Game::setGameAsReady()
 void Game::AddPlayer(const std::string& name, Player * client)
 {
     UI ui;
-    host->sendMessageToClient(client, "You've been added to the game.\n", false);
+    host->sendMessageToClient(client, ServerMessage::NORMAL, "You've been added to the game.\n");
 
     gamePlayer p;
     p.client = client;
@@ -79,7 +79,7 @@ void Game::gameTick()
     // Handle waiting for player response
     if (waitingForPlayer)
     {
-        std::string lastResponse = host->getReponseFromClientPrompt();
+        std::string lastResponse = host->getResponseFromClientPrompt(currentPlayerTurn->client);;
         
         if (!lastResponse.empty()) 
         {
@@ -95,6 +95,8 @@ void Game::gameTick()
             else
             {
                 /*
+
+
                 std::cout << "Trying reprompt" << std::endl;
                 // FIX ME
                 waitingForPlayer = true;
@@ -147,14 +149,14 @@ void Game::nextPlayer()
 
 void Game::resetGame()
 {
-    host->promptComplete();
+    host->promptComplete(currentPlayerTurn->client);
 
     eliminateBrokePlayers();
     if (players.size() < 2)
     {
         for (gamePlayer& p : players)
         {
-            host->sendMessageToClient(p.client, "Not enough players with money left. Waiting for a new game.\n", false);
+            host->sendMessageToClient(p.client, ServerMessage::NORMAL, "Not enough players with money left. Waiting for a new game.\n");
         }
         isStarted = false;
         waitingForPlayer = false;
@@ -184,7 +186,7 @@ void Game::resetGame()
     pTurn = -1;
     std::cout << "Game has been reset. Starting a new game!" << std::endl;
     isStarted = true;
-    host->promptComplete();
+    host->promptComplete(currentPlayerTurn->client);
     host->enableOneTimeOverride();
 }
 
@@ -376,8 +378,8 @@ bool Game::pokerResponse(const std::string &lastResponse)
             return true;
         }
 
-        host->sendMessageToClient(currentPlayerTurn->client, "Invalid bet amount. Enter a positive amount up to your balance.\n", false);
-        host->promptClient(currentPlayerTurn->client, "How much? $");
+        host->sendMessageToClient(currentPlayerTurn->client, ServerMessage::NORMAL, "Invalid bet amount. Enter a positive amount up to your balance.\n");
+        host->sendMessageToClient(currentPlayerTurn->client, ServerMessage::PROMPT, "How much? $");
         pokerGameData.expChocie = BET_AMOUNT;
         return true;
     }
@@ -409,8 +411,8 @@ bool Game::pokerResponse(const std::string &lastResponse)
             return true;
         }
 
-        host->sendMessageToClient(currentPlayerTurn->client, "Invalid raise amount. Enter a positive raise you can afford.\n", false);
-        host->promptClient(currentPlayerTurn->client, "How much? $");
+        host->sendMessageToClient(currentPlayerTurn->client, ServerMessage::NORMAL, "Invalid raise amount. Enter a positive raise you can afford.\n");
+        host->sendMessageToClient(currentPlayerTurn->client, ServerMessage::PROMPT, "How much? $");
         pokerGameData.expChocie = RAISE_AMOUNT;
         return true;
     }
@@ -422,8 +424,8 @@ bool Game::pokerResponse(const std::string &lastResponse)
         {
             currentPlayerTurn->isBetting = true;
             std::cout << " is betting ... ";
-            host->promptComplete();
-            host->promptClient(currentPlayerTurn->client, "How much? $");
+            host->promptComplete(currentPlayerTurn->client);
+            host->sendMessageToClient(currentPlayerTurn->client, ServerMessage::PROMPT, "How much? $");
             pokerGameData.expChocie = BET_AMOUNT;
             return true;
         }
@@ -440,8 +442,8 @@ bool Game::pokerResponse(const std::string &lastResponse)
         if (lastResponse == "r") // Raise
         {
             currentPlayerTurn->isBetting = true;
-            host->promptComplete();
-            host->promptClient(currentPlayerTurn->client, "How much? $");
+            host->promptComplete(currentPlayerTurn->client);
+            host->sendMessageToClient(currentPlayerTurn->client, ServerMessage::PROMPT, "How much? $");
             pokerGameData.expChocie = RAISE_AMOUNT;
             std::cout << " is rasing ... " << std::endl;
             return true;
@@ -488,7 +490,7 @@ void Game::determineWhoWins()
         else
             winMsg = "YOU LOST :(\n" + winningPlayer->name + " has won $" + std::to_string(pokerGameData.pot);
         
-        host->sendMessageToClient(p.client, winMsg + "\n\n" + "Loading next round in 10 seconds...", false);
+        host->sendMessageToClient(p.client, ServerMessage::NORMAL, winMsg + "\n\n" + "Loading next round in 10 seconds...");
     }
     sleep(10);
     winningPlayer->money += pokerGameData.pot;
@@ -855,14 +857,12 @@ void Game::pokerGame()
     if (!isAnyBets)
     {
         pokerGameData.expChocie = BET_CHECK;
-        const std::string PROMPT = "Check ('c')   Bet ('b')   Fold ('f'): ";
-        host->promptClient(currentPlayerTurn->client, PROMPT);
+        host->sendMessageToClient(currentPlayerTurn->client, ServerMessage::PROMPT, "Check ('c')   Bet ('b')   Fold ('f'): ");
     }
     else if (currentPlayerTurn->raise != pokerGameData.gameRaise)
     {
         pokerGameData.expChocie = CALL_RAISE;
-        const std::string PROMPT2 = "Call ('c')   Raise ('r')   Fold ('f'): ";
-        host->promptClient(currentPlayerTurn->client, PROMPT2);
+        host->sendMessageToClient(currentPlayerTurn->client, ServerMessage::PROMPT, "Call ('c')   Raise ('r')   Fold ('f'): ");
     }
 }
 
@@ -883,7 +883,7 @@ void Game::eliminateBrokePlayers()
     for (gamePlayer* p : removed)
     {
         if (p != nullptr && p->client != nullptr)
-            host->sendMessageToClient(p->client, "You are out of money and have been removed from the game.\n", false);
+            host->sendMessageToClient(p->client, ServerMessage::NORMAL, "You are out of money and have been removed from the game.\n");
     }
 
     players.erase(
@@ -922,7 +922,7 @@ void Game::UpdateDisplayForAll(bool isLast)
     for (gamePlayer& player : players)
     {
         // Clear screen
-        host->sendMessageToClient(player.client, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", false);
+        host->sendMessageToClient(player.client, ServerMessage::NORMAL, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
 
         std::cout << "Displaying for -> " << player.name << std::endl;
 
@@ -961,7 +961,7 @@ void Game::UpdateDisplayForAll(bool isLast)
             str += s;
         }
 
-        host->sendMessageToClient(player.client, str, false);
+        host->sendMessageToClient(player.client, ServerMessage::NORMAL, str);
     }
 }
 

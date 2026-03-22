@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <cstdint>
 
 // Constructor
 Client::Client()
@@ -20,8 +21,15 @@ void Client::Start()
     UI ui;
 
     // Prompt for server IP address
-    std::string ip = ui.promptLine("Server IP:");
-    // Attempt to join the server
+    std::string ip;
+    do {
+        ip = ui.promptLine("Server IP:");
+    } while (ip.empty());
+    if (ip.compare("l") == 0 || ip.compare("localhost") == 0 || ip.compare("LOCALHOST") == 0 || ip.compare("") == 0)
+    {
+        ip = "127.0.0.1"; // Default IP address
+    }
+    // Attempt to join the ser        ver
     
     Join(ip);
 }
@@ -29,7 +37,7 @@ void Client::Start()
 void Client::Join(std::string ip)
 {
     UI ui;
-    const int PORT = 8080; // Server port
+    const int PORT = 6769; // Server port
     int sock = 0;          // Client socket descriptor
     sockaddr_in serv_addr; // Server address struct
 
@@ -62,49 +70,87 @@ void Client::Join(std::string ip)
     // Main Game Loop
     while (true) 
     {
-        // Receive display update from server
-        char buffer[MESSAGE_SIZE] = {0};
-        int valread = read(sock, buffer, sizeof(buffer) - 1);
+        // Read length prefix (4 bytes)
+        char lenBuffer[4] = {0};
+        int lenRead = read(sock, lenBuffer, 4);
         
-        if (valread <= 0) 
+        if (lenRead <= 0) 
         {
-            if (valread == 0)
+            if (lenRead == 0)
             {
                 std::cout << "Server disconnected.\n";
-                break; // Try again
+                break;
             }
             else
             {
                 std::cout << "Read failed.\n";
                 continue;
             }
-            
         }
-
-        buffer[valread] = '\0'; // Null-terminate the buffer
-        std::string serverMessage(buffer);
-
-        //std::cout << "=========START===========>\n" << serverMessage << "\n<===========END===========" << std::endl;
         
-        if (serverMessage.find(CLEAR_MSG) != std::string::npos)
+        uint32_t messageLen = ntohl(*reinterpret_cast<uint32_t*>(lenBuffer));
+        
+        // Validate message length
+        if (messageLen > MESSAGE_SIZE)
         {
-            std::cout << "clearing" << std::endl;
-            //ui.clearScreen();
+            std::cerr << "Message too large: " << messageLen << " bytes\n";
+            continue;
         }
-        else if (serverMessage.find(PROMPT_MSG) != std::string::npos)
+        
+        // Read the message (type + data)
+        char buffer[MESSAGE_SIZE] = {0};
+        int valread = read(sock, buffer, messageLen);
+        
+        if (valread <= 0) 
         {
-            /*
-            int len = PROMPT_MSG.length();
-            int pos = serverMessage.find(PROMPT_MSG);
-            std::string sub = serverMessage.substr(pos + len);
-            std::string input = ui.promptLine(sub);
-            */
-            std::string input = ui.promptLine(serverMessage);
-            send(sock, input.c_str(), input.size(), 0);
+            if (valread == 0)
+            {
+                std::cout << "Server disconnected.\n";
+                break;
+            }
+            else
+            {
+                std::cout << "Read failed.\n";
+                continue;
+            }
         }
-        else //Print anything else
+        
+        std::string serverMessage(buffer, valread);
+        
+        if (serverMessage.empty())
         {
-            std::cout << serverMessage << std::endl;
+            std::cerr << "Received empty message from server.\n";
+            continue;
+        }
+        
+        // Parse message type first
+        ServerMessage msgType = static_cast<ServerMessage>(serverMessage[0]);
+        std::string parsedMsg = serverMessage.size() > 1 ? serverMessage.substr(1) : "";
+        
+        // Parse message
+        switch (msgType)
+        {
+            case ServerMessage::NORMAL:
+                std::cout << parsedMsg << std::endl; // Display the message
+                break;
+            case ServerMessage::CLEAR:
+                ui.clearScreen();
+                break;
+            case ServerMessage::PROMPT:
+            {
+                std::string input = ui.promptLine(parsedMsg);
+                if (input == "q" || input == "Q")
+                {
+                    sendMessageToHost(sock, ClientMessage::QUIT, "Client is quitting.");
+                    std::cout << "Quitting...\n";
+                    break;
+                }
+                sendMessageToHost(sock, ClientMessage::RESPONSE, input);
+                break;
+            }
+            default:
+                std::cerr << "Unknown message type received.\n";
+                continue;
         }
         
     }
@@ -113,4 +159,11 @@ void Client::Join(std::string ip)
     close(sock);
 
     
+}
+void Client::sendMessageToHost(int socket, ClientMessage messageType, const std::string& dataStr)
+{
+    char msgType = static_cast<char>(messageType);
+    std::string packet = std::string(1, msgType) + dataStr;
+    //std::cout << "Client --> Server: " << packet << "\n";
+    send(socket, packet.c_str(), packet.size(), 0);
 }
