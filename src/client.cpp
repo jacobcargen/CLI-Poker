@@ -18,141 +18,106 @@ Client::Client()
 // Private functions
 void Client::Start()
 {
-    UI ui;
-
-    // Prompt for server IP address
-    std::string ip;
-    do {
-        ip = ui.promptLine("Server IP:");
-    } while (ip.empty());
-    if (ip.compare("l") == 0 || ip.compare("localhost") == 0 || ip.compare("LOCALHOST") == 0 || ip.compare("") == 0)
-    {
-        ip = "127.0.0.1"; // Default IP address
+    std::string addr;
+    std::cout << "Server IP: ";
+    std::getline(std::cin, addr);
+    while (addr.empty()) {
+        std::cout << "Server IP: ";
+        std::getline(std::cin, addr);
     }
-    // Attempt to join the ser        ver
-    
-    Join(ip);
+    int colonIndex = addr.find_first_of(":") ? addr.find_first_of(":") : -1;
+    std::string ip = addr.substr(0, colonIndex);
+    std::string port = (colonIndex != -1) ? addr.substr(colonIndex + 1) : "6769";
+    if (ip == "l" || ip == "localhost" || ip == "LOCALHOST" || ip == "")
+        ip = "127.0.0.1";
+    Join(ip, port);
 }
 
-void Client::Join(std::string ip)
+void Client::Join(std::string ip, std::string portStr)
 {
+    int port = std::stoi(portStr);
+    int sock = 0;
     UI ui;
-    const int PORT = 6769; // Server port
-    int sock = 0;          // Client socket descriptor
-    sockaddr_in serv_addr; // Server address struct
 
-    // Create socket
-    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) 
-    {
+    sockaddr_in serv_addr;
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         std::cerr << "Socket creation failed: " << strerror(errno) << "\n";
         return;
     }
-
-    serv_addr.sin_family = AF_INET;      // IPv4
-    serv_addr.sin_port = htons(PORT);   // Set port
-
-    // Convert IP address from string to binary
-    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0) 
-    {
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0) {
         std::cerr << "Invalid address or address not supported\n";
         return;
     }
-
-    // Connect to the server
-    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) 
-    {
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         std::cerr << "Connection to server failed: " << strerror(errno) << "\n";
         return;
     }
-
     std::cout << "Connected to server!\n";
-
-    // Main Game Loop
-    while (true) 
-    {
-        // Read length prefix (4 bytes)
+    while (true) {
         char lenBuffer[4] = {0};
         int lenRead = read(sock, lenBuffer, 4);
-        
-        if (lenRead <= 0) 
-        {
-            if (lenRead == 0)
-            {
+        if (lenRead <= 0) {
+            if (lenRead == 0) {
                 std::cout << "Server disconnected.\n";
                 break;
-            }
-            else
-            {
+            } else {
                 std::cout << "Read failed.\n";
                 continue;
             }
         }
-        
         uint32_t messageLen = ntohl(*reinterpret_cast<uint32_t*>(lenBuffer));
-        
-        // Validate message length
-        if (messageLen > MESSAGE_SIZE)
-        {
+        if (messageLen > MESSAGE_SIZE) {
             std::cerr << "Message too large: " << messageLen << " bytes\n";
             continue;
         }
-        
-        // Read the message (type + data)
         char buffer[MESSAGE_SIZE] = {0};
         int valread = read(sock, buffer, messageLen);
-        
-        if (valread <= 0) 
-        {
-            if (valread == 0)
-            {
+        if (valread <= 0) {
+            if (valread == 0) {
                 std::cout << "Server disconnected.\n";
                 break;
-            }
-            else
-            {
+            } else {
                 std::cout << "Read failed.\n";
                 continue;
             }
         }
-        
         std::string serverMessage(buffer, valread);
-        
-        if (serverMessage.empty())
-        {
+        if (serverMessage.empty()) {
             std::cerr << "Received empty message from server.\n";
             continue;
         }
-        
-        // Parse message type first
         ServerMessage msgType = static_cast<ServerMessage>(serverMessage[0]);
         std::string parsedMsg = serverMessage.size() > 1 ? serverMessage.substr(1) : "";
-        
-        // Parse message
-        switch (msgType)
-        {
+        switch (msgType) {
             case ServerMessage::NORMAL:
-                std::cout << parsedMsg << std::endl; // Display the message
+                std::cout << parsedMsg << std::endl;
                 break;
             case ServerMessage::CLEAR:
-                ui.clearScreen();
+                    // Clear the terminal using ANSI escape sequences
+                    std::cout << "\x1B[2J\x1B[H" << std::flush;
                 break;
-            case ServerMessage::PROMPT:
-            {
-                std::string input = ui.promptLine(parsedMsg);
-                if (input == "q" || input == "Q")
-                {
+            case ServerMessage::PROMPT: {
+                std::string input = promptLineWithSelect(sock, parsedMsg);
+                if (input.empty() || input == "") {
+                    // Input was cancelled due to server message, reprompt
+                    
+                    break;
+                }
+                if (input == "q" || input == "Q") {
                     sendMessageToHost(sock, ClientMessage::QUIT, "Client is quitting.");
                     std::cout << "Quitting...\n";
                     break;
                 }
-                sendMessageToHost(sock, ClientMessage::RESPONSE, input);
+                if (!input.empty())
+                    sendMessageToHost(sock, ClientMessage::RESPONSE, input);
                 break;
             }
             default:
                 std::cerr << "Unknown message type received.\n";
                 continue;
         }
-        
     }
 
     // Close the socket when done
@@ -164,6 +129,51 @@ void Client::sendMessageToHost(int socket, ClientMessage messageType, const std:
 {
     char msgType = static_cast<char>(messageType);
     std::string packet = std::string(1, msgType) + dataStr;
-    //std::cout << "Client --> Server: " << packet << "\n";
     send(socket, packet.c_str(), packet.size(), 0);
+}
+
+// Prompt for input, but also listen for RESET from server
+std::string Client::promptLineWithSelect(int sock, const std::string& prompt)
+{
+    std::string userInput;
+    std::cout << prompt;
+    std::cout.flush();
+    userInput.clear();
+    while (true) {
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(sock, &readfds);
+        FD_SET(STDIN_FILENO, &readfds);
+        int maxfd = (sock > STDIN_FILENO) ? sock : STDIN_FILENO;
+        int activity = select(maxfd + 1, &readfds, NULL, NULL, NULL);
+        if (activity < 0) {
+            std::cerr << "select() error\n";
+            return "";
+        }
+        if (FD_ISSET(sock, &readfds)) {
+            // Incoming message from server
+            char lenBuffer[4] = {0};
+            int lenRead = read(sock, lenBuffer, 4);
+            if (lenRead <= 0) return "";
+            uint32_t messageLen = ntohl(*reinterpret_cast<uint32_t*>(lenBuffer));
+            if (messageLen > MESSAGE_SIZE) return "";
+            char buffer[MESSAGE_SIZE] = {0};
+            int valread = read(sock, buffer, messageLen);
+            if (valread <= 0) return "";
+            std::string serverMessage(buffer, valread);
+            if (serverMessage.empty()) return "";
+            ServerMessage msgType = static_cast<ServerMessage>(serverMessage[0]);
+            std::string parsedMsg = serverMessage.size() > 1 ? serverMessage.substr(1) : "";
+            if (msgType == ServerMessage::CANCEL_PROMPT) {
+                std::cout << "\n[Input cancelled by server message]\n";
+                return "";
+            }
+            return "";
+        }
+        if (FD_ISSET(STDIN_FILENO, &readfds)) {
+            std::getline(std::cin, userInput);
+            break;
+        }
+    }
+    return userInput;
 }

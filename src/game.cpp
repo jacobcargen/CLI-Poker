@@ -187,7 +187,6 @@ void Game::resetGame()
     std::cout << "Game has been reset. Starting a new game!" << std::endl;
     isStarted = true;
     host->promptComplete(currentPlayerTurn->client);
-    host->enableOneTimeOverride();
 }
 
 void Game::getNewDeck(std::vector<card>& deck)

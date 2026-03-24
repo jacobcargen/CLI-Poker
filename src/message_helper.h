@@ -8,7 +8,8 @@ enum class ServerMessage : char {
     NORMAL = 40,
     CLEAR = 41,
     PROMPT = 42,
-    PROMPT_KEY = 43
+    PROMPT_KEY = 43,
+    CANCEL_PROMPT = 44,
 };
 
 enum class ClientMessage : char {

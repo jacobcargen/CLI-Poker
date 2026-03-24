@@ -36,7 +36,8 @@ int main()
 void host()
 {
     // Host will be the only one to use game.h / game.cpp and all other files
-    Host host;
+    Host *host = new Host();
+    delete host;
 }
 void client()
 {

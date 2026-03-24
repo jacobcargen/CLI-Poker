@@ -10,10 +10,10 @@ public:
     Client();
 
 private:
-    // Private
     void Start();
-    void Join(std::string ip);
+    void Join(std::string ip, std::string port);
     void sendMessageToHost(int socket, ClientMessage messageType, const std::string& dataStr);
+    std::string promptLineWithSelect(int sock, const std::string& prompt);
 
 };
 
