@@ -3,6 +3,7 @@
 #define GAME_H
 
 #include "ui.h"
+#include "game_instance.h"
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -57,7 +58,7 @@ struct pokerData
 
 #pragma endregion
 
-class Game {
+class Game : public GameInstance {
 public:
     // Constructor
     Game();

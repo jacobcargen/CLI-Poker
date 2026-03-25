@@ -9,8 +9,10 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include "game.h"
 #include "message_helper.h"
+#include <vector>
+// Forward declare GameInstance to avoid circular include
+class GameInstance;
 
 #ifndef HOST_H
 #define HOST_H
@@ -39,6 +41,13 @@ struct Player {
     std::string promptMessage = "";
     std::string clientPromptResponse = "";
 } typedef Player;
+
+struct gameLobby {
+    std::vector<Player*> players;
+    GameInstance* game;
+    bool isInGameLobby = false;
+} typedef gameLobby;
+
 
 // Helper functions for manipulating/checking `Player::state` bitmask
 inline bool hasState(const Player& p, playerState s) {
@@ -82,7 +91,7 @@ public:
     void promptComplete(Player * client);
     std::string getResponseFromClientPrompt(Player * client);
     void reprompt(Player * client);
-    
+    void handleNicknames();
 
     // Destructor
     ~Host();

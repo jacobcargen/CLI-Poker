@@ -16,8 +16,10 @@ void UI::Start()
 
 void UI::clearScreen() 
 {
-    system("clear");
+    //system("clear");
     //std::cout << "\033[2J\033[1;1H"; // ANSI escape code to clear screen and move cursor to top-left
+    //std::cout << "\x1B[2J\x1B[H" << std::flush; // Alternative ANSI escape code
+    std::cout << std::string(100, '\n'); // Fallback: print many newlines to simulate clearing
 }
 
 std::string UI::promptLine(const std::string& text)

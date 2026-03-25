@@ -8,6 +8,9 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <cstdint>
+#include <termios.h>
+#include <deque>
+
 
 // Constructor
 Client::Client()
@@ -19,7 +22,6 @@ Client::Client()
 void Client::Start()
 {
     std::string addr;
-    std::cout << "Server IP: ";
     std::getline(std::cin, addr);
     while (addr.empty()) {
         std::cout << "Server IP: ";
@@ -31,6 +33,15 @@ void Client::Start()
     if (ip == "l" || ip == "localhost" || ip == "LOCALHOST" || ip == "")
         ip = "127.0.0.1";
     Join(ip, port);
+}
+
+// Trim whitespace from both ends
+static inline std::string trim(const std::string &s)
+{
+    size_t start = s.find_first_not_of(" \t\n\r");
+    if (start == std::string::npos) return "";
+    size_t end = s.find_last_not_of(" \t\n\r");
+    return s.substr(start, end - start + 1);
 }
 
 void Client::Join(std::string ip, std::string portStr)
@@ -55,6 +66,8 @@ void Client::Join(std::string ip, std::string portStr)
         return;
     }
     std::cout << "Connected to server!\n";
+    std::deque<std::string> history;
+    const size_t HISTORY_MAX = 100;
     while (true) {
         char lenBuffer[4] = {0};
         int lenRead = read(sock, lenBuffer, 4);
@@ -93,33 +106,60 @@ void Client::Join(std::string ip, std::string portStr)
         switch (msgType) {
             case ServerMessage::NORMAL:
                 std::cout << parsedMsg << std::endl;
+                // store displayed lines in history
+                history.push_back(parsedMsg);
+                if (history.size() > HISTORY_MAX) history.pop_front();
                 break;
             case ServerMessage::CLEAR:
-                    // Clear the terminal using ANSI escape sequences
-                    std::cout << "\x1B[2J\x1B[H" << std::flush;
+                    // Clear the terminal using UI and drop history so old lines aren't reprinted
+                    ui.clearScreen();
+                    history.clear();
                 break;
             case ServerMessage::PROMPT: {
-                std::string input = promptLineWithSelect(sock, parsedMsg);
-                if (input.empty() || input == "") {
-                    // Input was cancelled due to server message, reprompt
-                    
-                    break;
+                std::string input;
+                bool isFirst = true;
+                while (input.empty())
+                {
+                    if (isFirst) {
+                        isFirst = false;
+                    }
+                    else
+                    {
+                        // Reprint last HISTORY_MAX lines except parsedMsg
+                        ui.clearScreen();
+                        for (const auto &line : history) {
+                            if (!parsedMsg.empty() && line == parsedMsg) continue;
+                            std::cout << line << std::endl;
+                        }
+                    }
+
+                    input = promptLineWithSelect(sock, parsedMsg);
+                    input = trim(input);
                 }
+
                 if (input == "q" || input == "Q") {
                     sendMessageToHost(sock, ClientMessage::QUIT, "Client is quitting.");
                     std::cout << "Quitting...\n";
-                    break;
+                    // Flush any pending stdin so it doesn't fall through to the shell
+                    tcflush(STDIN_FILENO, TCIFLUSH);
+                    close(sock);
+                    return;
                 }
                 if (!input.empty())
                     sendMessageToHost(sock, ClientMessage::RESPONSE, input);
                 break;
             }
+            case ServerMessage::CANCEL_PROMPT:
+                // Ignore, not important in this scenario
+                break;
             default:
                 std::cerr << "Unknown message type received.\n";
                 continue;
         }
     }
 
+    // Flush stdin to prevent any leftover input from falling through to the shell
+    tcflush(STDIN_FILENO, TCIFLUSH);
     // Close the socket when done
     close(sock);
 
@@ -129,6 +169,7 @@ void Client::sendMessageToHost(int socket, ClientMessage messageType, const std:
 {
     char msgType = static_cast<char>(messageType);
     std::string packet = std::string(1, msgType) + dataStr;
+    //std::cout << "Client --> Server MSGTYPE:{"<<(int)msgType<<"}: " << packet << "\n";
     send(socket, packet.c_str(), packet.size(), 0);
 }
 
@@ -172,6 +213,7 @@ std::string Client::promptLineWithSelect(int sock, const std::string& prompt)
         }
         if (FD_ISSET(STDIN_FILENO, &readfds)) {
             std::getline(std::cin, userInput);
+            userInput = trim(userInput);
             break;
         }
     }
